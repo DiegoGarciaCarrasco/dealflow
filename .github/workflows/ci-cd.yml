@@ -1,0 +1,101 @@
+name: ci-cd
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write # OIDC federated login to Azure; no stored client secrets
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore
+      - run: dotnet build --no-restore -c Release -warnaserror
+      - run: dotnet test --no-build -c Release --logger trx --collect:"XPlat Code Coverage"
+      - run: |
+          dotnet publish src/DealFlow.Api -c Release -o out/api
+          dotnet publish src/DealFlow.Worker -c Release -o out/worker
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: out/
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
+
+  deploy-dev:
+    # Only main deploys; the "dev" environment can require a manual approval in repo settings.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build-test, terraform-validate]
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform apply
+        working-directory: infra
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_ACCOUNT }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=dealflow-dev.tfstate" \
+            -backend-config="use_azuread_auth=true"
+          terraform plan -input=false -out=tfplan
+          terraform apply -input=false tfplan
+          echo "API_APP=$(terraform output -raw api_app_name)" >> "$GITHUB_ENV"
+          echo "FUNC_APP=$(terraform output -raw function_app_name)" >> "$GITHUB_ENV"
+          echo "API_URL=$(terraform output -raw api_url)" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: app
+          path: out
+
+      - uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.API_APP }}
+          package: out/api
+
+      - uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.FUNC_APP }}
+          package: out/worker
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 10); do
+            curl -fsS "$API_URL/health" && exit 0
+            sleep 15
+          done
+          echo "Health check failed" && exit 1

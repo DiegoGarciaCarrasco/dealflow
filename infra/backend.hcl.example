@@ -1,0 +1,5 @@
+resource_group_name  = "rg-tfstate"
+storage_account_name = "sadealflowtfstate"
+container_name       = "tfstate"
+key                  = "dealflow-dev.tfstate"
+use_azuread_auth     = true

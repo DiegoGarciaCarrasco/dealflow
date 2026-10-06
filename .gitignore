@@ -1,0 +1,13 @@
+bin/
+obj/
+out/
+TestResults/
+*.user
+.vs/
+.vscode/
+local.settings.json
+infra/.terraform/
+infra/*.tfstate*
+infra/tfplan
+infra/backend.hcl
+.DS_Store

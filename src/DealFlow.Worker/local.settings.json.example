@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "ServiceBus__fullyQualifiedNamespace": "<your-namespace>.servicebus.windows.net",
+    "ServiceBusQueueName": "deals",
+    "Cosmos__Endpoint": "https://<your-account>.documents.azure.com:443/",
+    "Cosmos__Database": "dealflow",
+    "Cosmos__Container": "deals",
+    "AzureOpenAI__Endpoint": "https://<your-openai>.openai.azure.com/",
+    "AzureOpenAI__Deployment": "chat",
+    "FeatureManagement__AiEnrichment": "true"
+  }
+}
