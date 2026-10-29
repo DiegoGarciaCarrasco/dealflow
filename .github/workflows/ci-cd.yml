@@ -91,6 +91,7 @@ jobs:
         with:
           app-name: ${{ env.FUNC_APP }}
           package: out/worker
+          sku: flexconsumption
 
       - name: Smoke test
         run: |

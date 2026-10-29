@@ -33,8 +33,7 @@ public sealed class AzureOpenAiDealEnricher(AzureOpenAIClient client, string dep
             ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat(),
         };
 
-        ChatCompletion completion = await _chat.CompleteChatAsync(
-            [new SystemChatMessage(SystemPrompt), new UserChatMessage(dealJson)], options, ct);
+        ChatCompletion completion = await _chat.CompleteChatAsync([new SystemChatMessage(SystemPrompt), new UserChatMessage(dealJson)], options, ct);
 
         return Parse(completion.Content[0].Text);
     }

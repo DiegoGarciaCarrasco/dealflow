@@ -13,9 +13,7 @@ public sealed class ProcessDealFunction(DealProcessor processor, ILogger<Process
     /// after MaxDeliveryCount attempts, moves it to the dead-letter queue for inspection.
     /// </summary>
     [Function(nameof(ProcessDeal))]
-    public async Task ProcessDeal(
-        [ServiceBusTrigger("%ServiceBusQueueName%", Connection = "ServiceBus")] ServiceBusReceivedMessage message,
-        CancellationToken ct)
+    public async Task ProcessDeal([ServiceBusTrigger("%ServiceBusQueueName%", Connection = "ServiceBus")] ServiceBusReceivedMessage message,CancellationToken ct) 
     {
         using var scope = logger.BeginScope(new Dictionary<string, object>
         {

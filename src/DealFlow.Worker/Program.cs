@@ -20,10 +20,23 @@ var config = builder.Configuration;
 var appConfigEndpoint = config["AppConfig:Endpoint"];
 if (!string.IsNullOrEmpty(appConfigEndpoint))
 {
-    config.AddAzureAppConfiguration(o => o
-        .Connect(new Uri(appConfigEndpoint), credential)
-        .UseFeatureFlags(ff => ff.SetRefreshInterval(TimeSpan.FromSeconds(30))));
-    builder.Services.AddAzureAppConfiguration();
+    // If App Configuration is unreachable at startup (auth, network, permissions), start anyway with
+    // flags OFF (rules enrichment) instead of crash-looping. A non-critical dependency must never take
+    // down message processing. The error goes to stderr, which the Functions host forwards to its logs.
+    try
+    {
+        config.AddAzureAppConfiguration(o => o
+            .Connect(new Uri(appConfigEndpoint), credential)
+            .UseFeatureFlags(ff => ff.SetRefreshInterval(TimeSpan.FromSeconds(30))));
+        builder.Services.AddAzureAppConfiguration();
+    }
+    catch (Exception ex)
+    {
+        var failed = config.Sources.LastOrDefault(s => s.GetType().Name.Contains("AzureAppConfiguration"));
+        if (failed is not null) config.Sources.Remove(failed);
+        Console.Error.WriteLine(
+            $"WARNING DealFlow.Worker: App Configuration unavailable at startup; feature flags default to OFF. {ex.GetType().Name}: {ex.Message}");
+    }
 }
 
 builder.Services
