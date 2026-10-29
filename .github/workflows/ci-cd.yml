@@ -27,6 +27,7 @@ jobs:
         with:
           name: app
           path: out/
+          include-hidden-files: true
 
   terraform-validate:
     runs-on: ubuntu-latest
