@@ -27,6 +27,7 @@ jobs:
         with:
           name: app
           path: out/
+          # The worker package needs its hidden .azurefunctions/ folder; upload-artifact skips dotfiles by default.
           include-hidden-files: true
 
   terraform-validate:
@@ -47,11 +48,14 @@ jobs:
     needs: [build-test, terraform-validate]
     runs-on: ubuntu-latest
     environment: dev
+    concurrency: deploy-dev   # never run two Terraform applies against the same state at once
     env:
       ARM_USE_OIDC: "true"
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
+      # Optional: your user's object ID → portal data roles (infra/admin-access.tf). Kept out of the repo.
+      TF_VAR_admin_object_id: ${{ secrets.ADMIN_OBJECT_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -59,9 +63,9 @@ jobs:
           terraform_wrapper: false
       - uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform apply
         working-directory: infra
@@ -69,13 +73,14 @@ jobs:
           terraform init -input=false \
             -backend-config="resource_group_name=${{ vars.TFSTATE_RG }}" \
             -backend-config="storage_account_name=${{ vars.TFSTATE_ACCOUNT }}" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=dealflow-dev.tfstate" \
+            -backend-config="container_name=${{ vars.TFSTATE_CONTAINER || 'tfstate' }}" \
+            -backend-config="key=${{ vars.TFSTATE_KEY || 'dealflow-dev.tfstate' }}" \
             -backend-config="use_azuread_auth=true"
           terraform plan -input=false -out=tfplan
           terraform apply -input=false tfplan
-          echo "API_APP=$(terraform output -raw api_app_name)" >> "$GITHUB_ENV"
-          echo "FUNC_APP=$(terraform output -raw function_app_name)" >> "$GITHUB_ENV"
+          echo "RG=$(terraform output -raw resource_group)" >> "$GITHUB_ENV"
+          echo "API=$(terraform output -raw api_app_name)" >> "$GITHUB_ENV"
+          echo "FUNC=$(terraform output -raw function_app_name)" >> "$GITHUB_ENV"
           echo "API_URL=$(terraform output -raw api_url)" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v4
@@ -83,21 +88,39 @@ jobs:
           name: app
           path: out
 
-      - uses: azure/webapps-deploy@v3
+      - name: Deploy API (App Service)
+        uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ env.API_APP }}
+          app-name: ${{ env.API }}
           package: out/api
 
-      - uses: Azure/functions-action@v1
+      - name: Deploy worker (Functions, Flex Consumption)
+        uses: Azure/functions-action@v1
         with:
-          app-name: ${{ env.FUNC_APP }}
+          app-name: ${{ env.FUNC }}
           package: out/worker
           sku: flexconsumption
 
-      - name: Smoke test
+      # "Deployment successful" is not enough: on Flex the host must start and register the
+      # Service Bus trigger, or messages wait in the queue (see docs/postmortem-worker-crash-loop.md). Wake it and check.
+      - name: Verify worker registered
+        run: |
+          az functionapp keys list -g "$RG" -n "$FUNC" > /dev/null
+          for i in $(seq 1 12); do
+            if az functionapp function list -g "$RG" -n "$FUNC" --query "[].name" -o tsv | grep -q ProcessDeal; then
+              echo "ProcessDeal is registered"; exit 0
+            fi
+            echo "Waiting for the Functions host to register ProcessDeal ($i/12)…"; sleep 15
+          done
+          echo "::error::ProcessDeal was not registered after deployment"; exit 1
+
+      - name: Wait for API health
         run: |
           for i in $(seq 1 10); do
             curl -fsS "$API_URL/health" && exit 0
             sleep 15
           done
-          echo "Health check failed" && exit 1
+          echo "::error::API health check failed"; exit 1
+
+      - name: End-to-end smoke test
+        run: bash scripts/smoke-test.sh

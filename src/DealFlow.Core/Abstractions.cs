@@ -10,6 +10,9 @@ public interface IDealRepository
 {
     Task<Deal?> GetAsync(string id, CancellationToken ct = default);
     Task UpsertAsync(Deal deal, CancellationToken ct = default);
+
+    /// <summary>Most recently submitted deals, newest first (cross-partition query; fine at demo scale, see ADR 0002).</summary>
+    Task<IReadOnlyList<Deal>> ListRecentAsync(int limit, CancellationToken ct = default);
 }
 
 public sealed record Enrichment(DealPriority Priority, string Summary);

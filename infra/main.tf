@@ -148,13 +148,6 @@ resource "azurerm_app_configuration" "this" {
   tags                = local.tags
 }
 
-# The identity running Terraform needs data-plane rights to write the flag.
-resource "azurerm_role_assignment" "deployer_appconfig" {
-  scope                = azurerm_app_configuration.this.id
-  role_definition_name = "App Configuration Data Owner"
-  principal_id         = data.azurerm_client_config.current.object_id
-}
-
 resource "azurerm_app_configuration_feature" "ai_enrichment" {
   configuration_store_id = azurerm_app_configuration.this.id
   name                   = "AiEnrichment"
@@ -166,7 +159,10 @@ resource "azurerm_app_configuration_feature" "ai_enrichment" {
     ignore_changes = [enabled]
   }
 
-  depends_on = [azurerm_role_assignment.deployer_appconfig]
+  # Whoever runs Terraform (you locally, or the GitHub Actions identity) needs the
+  # "App Configuration Data Owner" role to read/write this flag. That role is granted once,
+  # at subscription scope, by scripts/setup-github-oidc.sh, so local and CI runs never fight
+  # over a role assignment that names only the current caller.
 }
 
 # ---------------------------------------------------------------- API (App Service)
@@ -208,6 +204,9 @@ resource "azurerm_linux_web_app" "api" {
     Cosmos__Endpoint                      = azurerm_cosmosdb_account.this.endpoint
     Cosmos__Database                      = azurerm_cosmosdb_sql_database.this.name
     Cosmos__Container                     = azurerm_cosmosdb_sql_container.deals.name
+    # App Service sits behind a proxy; this makes ASP.NET Core read the real client IP from
+    # X-Forwarded-For, so the per-client rate limit on POST /deals is actually per client.
+    ASPNETCORE_FORWARDEDHEADERS_ENABLED = "true"
   }
 
   tags = local.tags

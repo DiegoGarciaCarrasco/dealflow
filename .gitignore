@@ -10,4 +10,6 @@ infra/.terraform/
 infra/*.tfstate*
 infra/tfplan
 infra/backend.hcl
-.DS_Store
+# Personal Terraform values (e.g. admin_object_id). Commit only *.example templates.
+infra/*.tfvars
+infra/*.auto.tfvars

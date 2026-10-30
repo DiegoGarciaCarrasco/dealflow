@@ -12,14 +12,14 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# settings -------------------------------------------------------------------
+# ----------------------------------------------------------------- settings --
 API_URL="${API_URL:-$(terraform -chdir=infra output -raw api_url)}"
 RG="${RG:-$(terraform -chdir=infra output -raw resource_group)}"
 FUNC="${FUNC:-$(terraform -chdir=infra output -raw function_app_name)}"
 SB="sb-${RG#rg-}"     # rg-dealflow-dev-xxxxx  ->  sb-dealflow-dev-xxxxx
 TIMEOUT=120           # max seconds to wait per run (Flex cold start can take ~1 min)
 
-# styling --------------------------------------------------------------------
+# ------------------------------------------------------------------ styling --
 if [ -t 1 ]; then
   BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
   YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'; CLEAR=$'\033[K'
@@ -34,7 +34,7 @@ warn() { printf "   ${YELLOW}⚠️   %s${RESET}\n" "$1"; WARN=$((WARN+1)); }
 info() { printf "   ${DIM}%s${RESET}\n" "$1"; }
 step() { printf "\n${BOLD}${CYAN}[%s/6] %s${RESET}\n" "$1" "$2"; }
 
-# header ---------------------------------------------------------------------
+# ------------------------------------------------------------------- header --
 printf "\n${BOLD}╔══════════════════════════════════════════════════════╗${RESET}\n"
 printf   "${BOLD}║            DealFlow  ·  End-to-end smoke test        ║${RESET}\n"
 printf   "${BOLD}╚══════════════════════════════════════════════════════╝${RESET}\n"
@@ -42,20 +42,20 @@ info "API:       $API_URL"
 info "Worker:    $FUNC"
 info "Queue:     $SB/deals"
 
-# 1. API is reachable =========================================================
+# ======================================================= 1. API is reachable ==
 step 1 "API health check"
 code=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/health")
 if [ "$code" = "200" ]; then pass "API is up (GET /health → 200)"
 else fail "API not healthy (GET /health → $code)"; fi
 
-# 2. Bad input gets rejected =================================================
+# ============================================== 2. Bad input gets rejected ===
 step 2 "Input validation"
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/deals" \
   -H "Content-Type: application/json" -d '{"accountName":"","region":"MARS","amountUsd":-5}')
 if [ "$code" = "400" ]; then pass "Invalid deal rejected (→ 400)"
 else fail "Invalid deal returned $code (expected 400)"; fi
 
-# 3. Worker is registered ====================================================
+# ================================================ 3. Worker is registered ====
 step 3 "Worker registration"
 if az functionapp function list -g "$RG" -n "$FUNC" --query "[].name" -o tsv 2>/dev/null | grep -q "ProcessDeal"; then
   pass "ProcessDeal function is registered"
@@ -64,7 +64,7 @@ else
   info "Wake it with: az functionapp keys list -g $RG -n $FUNC"
 fi
 
-# 4. Submit test deals =======================================================
+# ================================================== 4. Submit test deals =====
 step 4 "Submit test deals"
 IDS=""; NAMES=""
 submit() {  # $1 account  $2 region  $3 amount  $4 notes
@@ -85,7 +85,7 @@ submit "Northwind" "NA"    450000 "Multi-year renewal, competitor eval, exec spo
 submit "Contoso"   "LATAM"  90000 "Expansion into two new regions next quarter"
 submit "Fabrikam"  "APAC"    8000 "Small pilot, no deadline"
 
-# 5. Wait for the worker =====================================================
+# ============================================ 5. Wait for the worker =========
 step 5 "Worker processing  (API → Service Bus → Worker → OpenAI → Cosmos)"
 start=$(date +%s)
 ROWS=""
@@ -118,7 +118,7 @@ for id in $IDS; do
   done
 done
 
-# 6. Queue fully drained =====================================================
+# =============================================== 6. Queue fully drained ======
 step 6 "Queue health"
 counts=$(az servicebus queue show -g "$RG" --namespace-name "$SB" -n deals \
   --query "{a:countDetails.activeMessageCount, d:countDetails.deadLetterMessageCount}" -o json 2>/dev/null)
@@ -128,7 +128,7 @@ else fail "Messages still waiting (active = $active) — worker not consuming"; 
 if [ "$dead" = "0" ]; then pass "No failed messages (dead-letter = 0)"
 else fail "Failed messages (dead-letter = $dead) — peek the DLQ in Service Bus Explorer"; fi
 
-# results ====================================================================
+# ================================================================ results ====
 if [ -n "$ROWS" ]; then
   printf "\n${BOLD}Processed deals${RESET}\n"
   printf "   ${DIM}%-10s  %-6s  %-5s  %s${RESET}\n" "ACCOUNT" "PRIO" "BY" "SUMMARY"

@@ -21,5 +21,3 @@ provider "azurerm" {
   features {}
   # Subscription comes from ARM_SUBSCRIPTION_ID (set by the CI OIDC login or your shell).
 }
-
-data "azurerm_client_config" "current" {}

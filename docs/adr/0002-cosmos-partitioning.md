@@ -16,5 +16,5 @@ Capacity: **serverless** over provisioned throughput, because traffic is bursty 
 Serverless account, `Session` consistency, container `deals` partitioned by `/id`. Account keys disabled; apps use managed identities with Cosmos data-plane RBAC (the API gets read-only, the worker gets read/write).
 
 ## Consequences
-- Queries across deals (e.g., "all High priority deals in LATAM") are cross-partition fan-outs. If a reporting feature needs them, add a second container keyed for that query or use change feed to build a projection. Revisit before building a list endpoint.
+- Queries across deals (e.g., "all High priority deals in LATAM") are cross-partition fan-outs. The UI's `GET /deals?limit=N` (newest 20, max 50) accepts that cost because volume is tiny; a real reporting feature should use change feed to build a projection container keyed for its query.
 - Serverless has per-container storage and throughput ceilings; move to autoscale provisioned throughput if sustained load appears.

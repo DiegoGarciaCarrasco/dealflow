@@ -35,4 +35,18 @@ public sealed class CosmosDealRepository(Container container) : IDealRepository
 
     public Task UpsertAsync(Deal deal, CancellationToken ct = default) =>
         container.UpsertItemAsync(deal, new PartitionKey(deal.Id), cancellationToken: ct);
+
+    public async Task<IReadOnlyList<Deal>> ListRecentAsync(int limit, CancellationToken ct = default)
+    {
+        // Partitioned by /id, so this fans out across partitions. Acceptable for a small demo list;
+        // a real reporting view would read from a change-feed projection instead (ADR 0002).
+        var query = new QueryDefinition("SELECT TOP @limit * FROM c ORDER BY c.submittedAt DESC")
+            .WithParameter("@limit", limit);
+
+        var results = new List<Deal>(limit);
+        using var iterator = container.GetItemQueryIterator<Deal>(query);
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync(ct));
+        return results;
+    }
 }

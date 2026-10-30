@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DealFlow · Deal Desk</title>
+<meta name="description" content="Submit a sales deal and watch it flow through Service Bus, Azure Functions, Azure OpenAI and Cosmos DB.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a deal desk — pipeline strip on top, intake form beside the live result, history ledger below. */
+:root {
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --ink: #18212b;
+  --muted: #5f6b78;
+  --line: #dfe3e2;
+  --brand: #12606b;
+  --brand-ink: #ffffff;
+  --mark: #fff0a0;          /* highlighter: everything the AI added */
+  --mark-ink: #4a3c00;
+  --hi: #b4232f;  --hi-bg: #fbe3e5;
+  --med: #a35b00; --med-bg: #fdedd6;
+  --low: #3d6b4f; --low-bg: #e1f0e6;
+  --ok: #1f8a5b;  --warn: #b26b00;  --err: #b4232f;
+  --f-ui: "Instrument Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12171c; --panel: #1a2128; --ink: #e7ecef; --muted: #9aa7b2; --line: #2b353f;
+    --brand: #4cb3bd; --brand-ink: #06262a; --mark: #4a4012; --mark-ink: #ffe98a;
+    --hi: #ff8a92; --hi-bg: #3c1d21; --med: #ffbe6b; --med-bg: #3a2a14; --low: #8fd3a8; --low-bg: #193024;
+    --ok: #5fd39a; --warn: #ffbe6b; --err: #ff8a92; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 18px; padding-block: 22px 60px; display: grid; gap: 20px; }
+
+/* header */
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.brand h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+.brand h1 b { color: var(--brand); }
+.brand span { color: var(--muted); font-size: 14px; }
+.hdr-right { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.pill { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 11px; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--err); }
+a { color: var(--brand); }
+
+/* pipeline strip */
+.pipeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.stage { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; position: relative; min-width: 0; transition: border-color .2s, background .2s; }
+.stage small { display: block; font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.stage strong { display: block; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage em { display: block; font-style: normal; font-size: 12px; color: var(--muted); min-height: 18px; }
+.stage.active { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent); }
+.stage.done { border-color: color-mix(in srgb, var(--ok) 55%, var(--line)); }
+.stage.done em { color: var(--ok); }
+.stage.skipped { opacity: .55; }
+@media (max-width: 760px) { .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* main grid */
+.grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; align-items: start; }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-width: 0; }
+.panel h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
+.panel .sub { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; }
+
+/* form */
+form { display: grid; gap: 12px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+label { display: grid; gap: 5px; font-size: 13px; font-weight: 600; }
+input, select, textarea { font: inherit; font-weight: 400; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; width: 100%; }
+textarea { min-height: 92px; resize: vertical; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.field-err { color: var(--err); font-size: 12.5px; font-weight: 500; min-height: 0; }
+.field-err:empty { display: none; }
+.samples { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.chip-btn { font: inherit; font-size: 12.5px; border: 1px dashed var(--line); background: transparent; color: var(--ink); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.chip-btn:hover { border-color: var(--brand); color: var(--brand); }
+.submit { font: inherit; font-weight: 600; background: var(--brand); color: var(--brand-ink); border: 0; border-radius: 9px; padding: 11px 16px; cursor: pointer; }
+.submit:disabled { opacity: .55; cursor: progress; }
+.form-msg { font-size: 13.5px; margin: 0; }
+.form-msg.err { color: var(--err); }
+
+/* comparison */
+.compare { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: stretch; }
+@media (max-width: 560px) { .compare { grid-template-columns: minmax(0, 1fr); } .arrow { transform: rotate(90deg); justify-self: center; } }
+.side { border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+.side h3 { margin: 0 0 10px; font-family: var(--f-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.side.ai { background: color-mix(in srgb, var(--mark) 35%, var(--panel)); border-color: color-mix(in srgb, var(--mark) 80%, var(--line)); }
+.side.ai h3 { color: var(--mark-ink); }
+dl { margin: 0; display: grid; gap: 8px; }
+dt { font-size: 11.5px; color: var(--muted); }
+dd { margin: 0; font-size: 14.5px; overflow-wrap: anywhere; }
+.arrow { align-self: center; font-size: 22px; color: var(--muted); }
+mark { background: var(--mark); color: var(--mark-ink); padding: 1px 3px; border-radius: 3px; }
+.badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+.p-High { background: var(--hi-bg); color: var(--hi); }
+.p-Medium { background: var(--med-bg); color: var(--med); }
+.p-Low { background: var(--low-bg); color: var(--low); }
+.by-ai { background: var(--mark); color: var(--mark-ink); }
+.by-rules { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; font-size: 12.5px; color: var(--muted); }
+.meta code { font-family: var(--f-mono); font-size: 12px; }
+.waiting { color: var(--muted); font-size: 14px; }
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.empty { color: var(--muted); font-size: 14px; border: 1px dashed var(--line); border-radius: 10px; padding: 22px; text-align: center; }
+
+/* ledger */
+.ledger-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.ghost { font: inherit; font-size: 13px; background: transparent; border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 10px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--f-mono); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+th.ai-col { color: var(--mark-ink); background: color-mix(in srgb, var(--mark) 30%, transparent); }
+td.ai-col { background: color-mix(in srgb, var(--mark) 18%, transparent); }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.notes { color: var(--muted); max-width: 260px; }
+td.summary { min-width: 260px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--muted); }
+footer { color: var(--muted); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } .stage { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <h1>Deal<b>Flow</b></h1>
+      <span>Event-driven deal intake on Azure · AI triage with Azure OpenAI</span>
+    </div>
+    <div class="hdr-right">
+      <span class="pill" id="health"><i class="dot" id="health-dot"></i><span id="health-text">Checking API…</span></span>
+      <a href="https://github.com/DiegoGarciaCarrasco/dealflow" target="_blank" rel="noopener">Source on GitHub</a>
+    </div>
+  </header>
+
+  <!-- What happens to a deal, stage by stage. Lights up as the current deal moves. -->
+  <div class="pipeline" aria-label="Processing pipeline">
+    <div class="stage" id="st-api"><small>1 · App Service</small><strong>REST API</strong><em></em></div>
+    <div class="stage" id="st-bus"><small>2 · Service Bus</small><strong>Queue: deals</strong><em></em></div>
+    <div class="stage" id="st-fn"><small>3 · Azure Functions</small><strong>Worker</strong><em></em></div>
+    <div class="stage" id="st-ai"><small>4 · Azure OpenAI</small><strong>gpt-4.1-mini</strong><em></em></div>
+    <div class="stage" id="st-db"><small>5 · Cosmos DB</small><strong>Stored</strong><em></em></div>
+  </div>
+
+  <div class="grid">
+    <!-- Intake form -->
+    <section class="panel" aria-labelledby="form-title">
+      <h2 id="form-title">Submit a deal</h2>
+      <p class="sub">The API validates it, returns <code>202 Accepted</code>, and queues it. The worker enriches it in the background.</p>
+      <form id="deal-form" novalidate>
+        <div class="samples">Try a sample:
+          <button type="button" class="chip-btn" data-sample="0">Urgent renewal</button>
+          <button type="button" class="chip-btn" data-sample="1">Expansion</button>
+          <button type="button" class="chip-btn" data-sample="2">Small pilot</button>
+        </div>
+        <label>Account name
+          <input id="accountName" name="accountName" autocomplete="off" placeholder="e.g. Northwind Traders">
+          <span class="field-err" data-for="AccountName"></span>
+        </label>
+        <div class="row2">
+          <label>Region
+            <select id="region" name="region">
+              <option value="NA">NA</option><option value="LATAM">LATAM</option>
+              <option value="EMEA">EMEA</option><option value="APAC">APAC</option>
+            </select>
+            <span class="field-err" data-for="Region"></span>
+          </label>
+          <label>Amount (USD)
+            <input id="amountUsd" name="amountUsd" type="number" min="1" step="1" inputmode="numeric" placeholder="250000">
+            <span class="field-err" data-for="AmountUsd"></span>
+          </label>
+        </div>
+        <label>Notes for the AI to read
+          <textarea id="notes" name="notes" maxlength="4000" placeholder="Context: urgency, competitors, deadlines, risks…"></textarea>
+          <span class="field-err" data-for="Notes"></span>
+        </label>
+        <button class="submit" id="submit" type="submit">Submit deal</button>
+        <p class="form-msg" id="form-msg" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <!-- Live result: what was entered vs what the AI added -->
+    <section class="panel" aria-labelledby="result-title">
+      <h2 id="result-title">What the AI did</h2>
+      <p class="sub">Left is exactly what was submitted. Right is what the worker added, <mark>highlighted</mark>.</p>
+      <div id="result" aria-live="polite">
+        <div class="empty">Submit a deal, or pick one from the list below, to compare the input with the AI's output.</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- History -->
+  <section class="panel" aria-labelledby="ledger-title">
+    <div class="ledger-head">
+      <div>
+        <h2 id="ledger-title">Processed deals</h2>
+        <div class="legend">
+          <span>Highlighted columns are AI output</span>
+          <span><span class="badge by-ai">AI</span> enriched by Azure OpenAI</span>
+          <span><span class="badge by-rules">Rules</span> fallback (AI flag off or AI call failed)</span>
+        </div>
+      </div>
+      <button class="ghost" id="refresh" type="button">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Submitted</th><th>Account</th><th>Region</th><th>Amount</th><th>Notes (entered)</th>
+            <th class="ai-col">Priority</th><th class="ai-col">AI summary</th><th>By</th><th>Processing time</th>
+          </tr>
+        </thead>
+        <tbody id="ledger"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="ledger-empty" hidden>No processed deals yet. Submit one above.</div>
+  </section>
+
+  <footer>
+    <span>API on App Service · Worker on Azure Functions (Flex Consumption) · Service Bus · Cosmos DB · Azure OpenAI · App Configuration</span>
+    <span>Auth: managed identities, no keys</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  const when = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const POLL_MS = 2000, TIMEOUT_MS = 120000;
+
+  const samples = [
+    { accountName: "Northwind Traders", region: "NA", amountUsd: 450000,
+      notes: "Multi-year renewal. Competitor is in late-stage eval and the exec sponsor wants a signature this week." },
+    { accountName: "Contoso", region: "LATAM", amountUsd: 90000,
+      notes: "Expansion into two new regions next quarter. Procurement already approved the budget." },
+    { accountName: "Fabrikam", region: "APAC", amountUsd: 8000,
+      notes: "Small pilot for one team. No deadline." }
+  ];
+
+  // ---- small DOM helper: builds elements with textContent only (user input is never parsed as HTML)
+  function el(tag, props = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+      if (k === "class") node.className = v; else if (k === "text") node.textContent = v; else node.setAttribute(k, v);
+    }
+    for (const c of children) if (c != null) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    return node;
+  }
+  const seconds = (a, b) => ((new Date(b) - new Date(a)) / 1000);
+  const fmtSecs = (s) => s < 10 ? s.toFixed(1) + " s" : Math.round(s) + " s";
+
+  // ---- pipeline strip
+  const stages = ["st-api", "st-bus", "st-fn", "st-ai", "st-db"];
+  function setStage(id, state, note = "") {
+    const s = $(id); s.classList.remove("active", "done", "skipped");
+    if (state) s.classList.add(state);
+    s.querySelector("em").textContent = note;
+  }
+  function resetPipeline() { stages.forEach((id) => setStage(id, null, "")); }
+
+  // ---- health
+  async function checkHealth() {
+    try {
+      const r = await fetch("/health", { cache: "no-store" });
+      $("health-dot").className = "dot " + (r.ok ? "ok" : "bad");
+      $("health-text").textContent = r.ok ? "API healthy" : "API error " + r.status;
+    } catch { $("health-dot").className = "dot bad"; $("health-text").textContent = "API unreachable"; }
+  }
+
+  // ---- comparison panel
+  function priorityBadge(p) { return p ? el("span", { class: "badge p-" + p, text: p }) : el("span", { text: "—" }); }
+  function byBadge(by) { return el("span", { class: "badge " + (by === "ai" ? "by-ai" : "by-rules"), text: by === "ai" ? "AI · Azure OpenAI" : "Rules fallback" }); }
+
+  function renderCompare(deal, opts = {}) {
+    const entered = el("div", { class: "side" },
+      el("h3", { text: "You entered" }),
+      el("dl", {},
+        el("dt", { text: "Account" }), el("dd", { text: deal.accountName }),
+        el("dt", { text: "Region · Amount" }), el("dd", { text: `${deal.region} · ${money.format(deal.amountUsd)}` }),
+        el("dt", { text: "Notes" }), el("dd", { text: deal.notes || "(none)" })));
+
+    let added;
+    if (deal.status === "Processed") {
+      added = el("div", { class: "side ai" },
+        el("h3", { text: deal.enrichedBy === "ai" ? "Azure OpenAI added" : "Rules fallback added" }),
+        el("dl", {},
+          el("dt", { text: "Priority" }), el("dd", {}, priorityBadge(deal.priority)),
+          el("dt", { text: "Summary" }), el("dd", {}, el("mark", { text: deal.summary || "" })),
+          el("dt", { text: "Enriched by" }), el("dd", {}, byBadge(deal.enrichedBy))));
+    } else {
+      added = el("div", { class: "side ai" },
+        el("h3", { text: "AI output" }),
+        el("p", { class: "waiting" }, el("span", { class: "spinner", "aria-hidden": "true" }),
+          opts.waitingText || "Waiting for the worker…"));
+    }
+
+    const meta = el("div", { class: "meta" },
+      el("span", {}, "Deal ", el("code", { text: deal.id })),
+      deal.submittedAt ? el("span", { text: "Submitted " + when.format(new Date(deal.submittedAt)) }) : null,
+      deal.processedAt ? el("span", { text: "Processed in " + fmtSecs(seconds(deal.submittedAt, deal.processedAt)) + " (queue + worker + AI + save)" }) : null);
+
+    $("result").replaceChildren(el("div", { class: "compare" }, entered, el("div", { class: "arrow", "aria-hidden": "true", text: "→" }), added), meta);
+  }
+
+  // ---- history ledger
+  async function loadLedger() {
+    try {
+      const r = await fetch("/deals?limit=20", { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      const deals = await r.json();
+      $("ledger-empty").hidden = deals.length > 0;
+      $("ledger").replaceChildren(...deals.map((d) => {
+        const row = el("tr", { tabindex: "0", title: "Show this deal above" },
+          el("td", { class: "num", text: when.format(new Date(d.submittedAt)) }),
+          el("td", { text: d.accountName }),
+          el("td", { text: d.region }),
+          el("td", { class: "num", text: money.format(d.amountUsd) }),
+          el("td", { class: "notes", text: d.notes || "—" }),
+          el("td", { class: "ai-col" }, priorityBadge(d.priority)),
+          el("td", { class: "ai-col summary", text: d.summary || "" }),
+          el("td", {}, el("span", { class: "badge " + (d.enrichedBy === "ai" ? "by-ai" : "by-rules"), text: d.enrichedBy === "ai" ? "AI" : "Rules" })),
+          el("td", { class: "num", text: d.processedAt ? fmtSecs(seconds(d.submittedAt, d.processedAt)) : "—" }));
+        const show = () => { renderCompare(d); window.scrollTo({ top: 0, behavior: "smooth" }); };
+        row.addEventListener("click", show);
+        row.addEventListener("keydown", (e) => { if (e.key === "Enter") show(); });
+        return row;
+      }));
+    } catch {
+      $("ledger").replaceChildren();
+      $("ledger-empty").hidden = false;
+      $("ledger-empty").textContent = "Couldn't load processed deals. Check the API health indicator above.";
+    }
+  }
+
+  // ---- form
+  const form = $("deal-form");
+  document.querySelectorAll("[data-sample]").forEach((b) => b.addEventListener("click", () => {
+    const s = samples[+b.dataset.sample];
+    $("accountName").value = s.accountName; $("region").value = s.region;
+    $("amountUsd").value = s.amountUsd; $("notes").value = s.notes;
+  }));
+
+  function clearErrors() { form.querySelectorAll(".field-err").forEach((e) => (e.textContent = "")); $("form-msg").textContent = ""; $("form-msg").className = "form-msg"; }
+  function showMsg(text, isErr) { $("form-msg").textContent = text; $("form-msg").className = "form-msg" + (isErr ? " err" : ""); }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearErrors();
+    const body = {
+      accountName: $("accountName").value,
+      region: $("region").value,
+      amountUsd: Number($("amountUsd").value || 0),
+      notes: $("notes").value || null
+    };
+
+    $("submit").disabled = true;
+    resetPipeline();
+    setStage("st-api", "active", "POST /deals…");
+    const t0 = performance.now();
+
+    try {
+      const r = await fetch("/deals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+      if (r.status === 400) {
+        // ASP.NET Core ValidationProblem: { errors: { FieldName: ["message"] } } — shown under each field.
+        const problem = await r.json();
+        for (const [field, msgs] of Object.entries(problem.errors || {})) {
+          const slot = form.querySelector(`.field-err[data-for="${field}"]`);
+          if (slot) slot.textContent = msgs.join(" ");
+        }
+        setStage("st-api", "done", "400 · rejected");
+        showMsg("The API rejected the deal. Fix the highlighted fields.", true);
+        return;
+      }
+      if (r.status === 429) {
+        setStage("st-api", "done", "429 · rate limited");
+        showMsg("Too many submissions from this browser. Wait a minute and try again.", true);
+        return;
+      }
+      if (r.status !== 202) throw new Error("Unexpected status " + r.status);
+
+      const accepted = await r.json();
+      const ms = Math.round(performance.now() - t0);
+      setStage("st-api", "done", `202 in ${ms} ms`);
+      setStage("st-bus", "done", "queued");
+      setStage("st-fn", "active", "waiting…");
+      showMsg(`Accepted in ${ms} ms. Queued for processing.`);
+
+      const pending = { id: accepted.id, ...body, region: body.region, status: "Received", submittedAt: new Date().toISOString() };
+      renderCompare(pending);
+      form.reset();
+      await pollUntilProcessed(accepted.id, pending);
+    } catch (err) {
+      setStage("st-api", null, "");
+      showMsg("Couldn't reach the API. " + (err && err.message ? err.message : ""), true);
+    } finally {
+      $("submit").disabled = false;
+    }
+  });
+
+  async function pollUntilProcessed(id, pending) {
+    const start = Date.now();
+    while (Date.now() - start < TIMEOUT_MS) {
+      await new Promise((res) => setTimeout(res, POLL_MS));
+      const waited = Math.round((Date.now() - start) / 1000);
+      setStage("st-fn", "active", `waiting… ${waited}s`);
+      renderCompare(pending, { waitingText: waited > 15
+        ? `Waiting for the worker… ${waited}s (a cold start on Flex Consumption can take up to a minute)`
+        : `Waiting for the worker… ${waited}s` });
+
+      const r = await fetch(`/deals/${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (r.status === 404) continue;            // not saved yet: still in the queue or being processed
+      if (!r.ok) continue;
+      const deal = await r.json();
+      if (deal.status !== "Processed") continue;
+
+      setStage("st-fn", "done", "processed");
+      if (deal.enrichedBy === "ai") setStage("st-ai", "done", deal.priority + " priority");
+      else setStage("st-ai", "skipped", "skipped · rules used");
+      setStage("st-db", "done", "saved");
+      showMsg(`Processed in ${fmtSecs(seconds(deal.submittedAt, deal.processedAt))}.`);
+      renderCompare(deal);
+      loadLedger();
+      return;
+    }
+    setStage("st-fn", "active", "no result yet");
+    showMsg("Still not processed after 2 minutes. The worker may be stopped; check the Function App.", true);
+  }
+
+  $("refresh").addEventListener("click", loadLedger);
+  checkHealth();
+  loadLedger();
+})();
+</script>
+</body>
+</html>

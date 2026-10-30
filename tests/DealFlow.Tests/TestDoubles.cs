@@ -17,6 +17,10 @@ internal sealed class InMemoryRepository : IDealRepository
         Upserts++;
         return Task.CompletedTask;
     }
+
+    public Task<IReadOnlyList<Deal>> ListRecentAsync(int limit, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Deal>>(
+            Items.Values.OrderByDescending(d => d.SubmittedAt).Take(limit).ToList());
 }
 
 internal sealed class FakeEnricher(Func<Deal, Enrichment> behavior) : IDealEnricher

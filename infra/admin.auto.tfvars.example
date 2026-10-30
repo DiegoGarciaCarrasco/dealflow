@@ -1,0 +1,4 @@
+# Copy to admin.auto.tfvars (gitignored) for local Terraform runs.
+# Get your ID with: az ad signed-in-user show --query id -o tsv
+# Use the same value as the ADMIN_OBJECT_ID GitHub secret.
+admin_object_id = "00000000-0000-0000-0000-000000000000"
