@@ -13,3 +13,5 @@ infra/backend.hcl
 # Personal Terraform values (e.g. admin_object_id). Commit only *.example templates.
 infra/*.tfvars
 infra/*.auto.tfvars
+# macOS Finder metadata
+.DS_Store

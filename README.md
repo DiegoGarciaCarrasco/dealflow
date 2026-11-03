@@ -2,7 +2,9 @@
 
 An event-driven deal-intake service on Azure. A web UI and REST API accept sales deals, a Service Bus queue decouples intake from processing, and an Azure Functions worker prioritizes and summarizes each deal with Azure OpenAI before storing it in Cosmos DB.
 
-Built with C# / .NET 8, provisioned with Terraform, deployed by GitHub Actions over OIDC, and authenticated end-to-end with managed identities — no keys, connection strings, or pipeline secrets.
+Built with C# / .NET 8, provisioned with Terraform, deployed by GitHub Actions over OIDC, and authenticated end-to-end with managed identities — no keys, connection strings, or stored pipeline credentials.
+
+📖 **[How this was built](docs/build-story.md)**: design → first deploy → live-site incident → CI/CD → web UI, with screenshots of every step.
 
 ![DealFlow UI: the submitted deal next to what Azure OpenAI added](docs/screenshots/01-ui-deal-result.png)
 
@@ -50,6 +52,7 @@ flowchart LR
 | [ADR 0002](docs/adr/0002-cosmos-partitioning.md) | Cosmos DB serverless partitioned by `/id` for cheap point reads |
 | [ADR 0003](docs/adr/0003-ai-enrichment-feature-flag.md) | LLM enrichment behind a runtime feature flag, with validation and a rules fallback |
 | [Postmortem](docs/postmortem-worker-crash-loop.md) | Live-site incident: worker crash loop from an SDK major-version conflict, and what changed |
+| [Build story](docs/build-story.md) | The whole project, phase by phase, including every problem hit along the way |
 
 ## Reliability and security
 - **At-least-once delivery handled:** broker duplicate detection plus an idempotent processor.
@@ -71,7 +74,7 @@ flowchart LR
 | ![Application map](docs/screenshots/15-appinsights-application-map.png) | ![Incident timeline](docs/screenshots/17-incident-kql-crash-loop.png) |
 | Application Insights: the whole distributed flow | Postmortem evidence: crash loop and recovery |
 
-More in [`docs/screenshots/`](docs/screenshots/).
+The full set (30 screenshots, in the order things were built and fixed) is in the **[build story](docs/build-story.md)**.
 
 ## Repository layout
 ```
@@ -82,7 +85,7 @@ src/DealFlow.Worker         Azure Functions (isolated) trigger, Azure OpenAI enr
 tests/DealFlow.Tests        xUnit unit tests + in-memory API integration tests
 infra/                      Terraform (azurerm 4.x) with remote state in Azure Storage
 scripts/                    OIDC setup for GitHub Actions, end-to-end smoke test
-docs/                       ADRs, postmortem, screenshots
+docs/                       ADRs, build story, postmortem, screenshots
 ```
 
 ## Run the tests
@@ -104,7 +107,8 @@ One-time setup:
    ```
    It creates an app registration trusted only by this repo's `dev` environment (OIDC federated credential) and grants its roles.
 3. In GitHub, create the `dev` environment, then add the secrets and variables the script prints. Azure IDs go in **secrets** so they're masked in the public Actions logs.
-4. Push to `main`.
+4. In GitHub → Settings → Environments → `dev`, limit deployments to the `main` branch.
+5. Push to `main`.
 
 Optional: set the repository secret `ADMIN_OBJECT_ID`, and the same value in a gitignored `infra/admin.auto.tfvars` for local runs (see the `.example`). Every deploy then grants that user data access for the portal's Cosmos Data Explorer, Service Bus Explorer, and OpenAI playground. Subscription Owner alone isn't enough, because key auth is disabled.
 

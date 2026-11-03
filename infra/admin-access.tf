@@ -48,3 +48,12 @@ resource "azurerm_role_assignment" "admin_openai_user" {
   principal_id         = var.admin_object_id
   principal_type       = "User"
 }
+
+# App Configuration feature manager / configuration explorer: read and toggle the AiEnrichment flag.
+resource "azurerm_role_assignment" "admin_appconfig_owner" {
+  count                = local.grant_admin ? 1 : 0
+  scope                = azurerm_app_configuration.this.id
+  role_definition_name = "App Configuration Data Owner"
+  principal_id         = var.admin_object_id
+  principal_type       = "User"
+}
